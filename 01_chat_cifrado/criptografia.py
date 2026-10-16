@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import os
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
@@ -60,3 +61,30 @@ def derivar_llave_aes(secreto, salt):
 def generar_salt():
     # Generar 16 bytes aleatorios para HKDF.
     return os.urandom(16)
+
+def cifrar_mensaje(llave_aes, mensaje):
+    # Generar un nonce aleatorio de 12 bytes.
+    nonce = os.urandom(12)
+
+    # Cifrar y autenticar el mensaje.
+    aesgcm = AESGCM(llave_aes)
+    cifrado = aesgcm.encrypt(
+        nonce,
+        mensaje.encode("utf-8"),
+        None
+    )
+
+    # Devolver nonce y texto cifrado con su etiqueta.
+    return nonce + cifrado
+
+
+def descifrar_mensaje(llave_aes, datos):
+    # Separar el nonce del texto cifrado.
+    nonce = datos[:12]
+    cifrado = datos[12:]
+
+    # Verificar la autenticidad y descifrar.
+    aesgcm = AESGCM(llave_aes)
+    mensaje = aesgcm.decrypt(nonce, cifrado, None)
+
+    return mensaje.decode("utf-8")

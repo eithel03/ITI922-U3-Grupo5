@@ -3,58 +3,90 @@
 
 import socket
 
+from criptografia import (
+    generar_llaves,
+    calcular_secreto,
+    derivar_llave_aes,
+    cifrar_mensaje,
+    descifrar_mensaje
+)
+
+from comunicacion import enviar_datos, recibir_datos
+
+
 HOST = "127.0.0.1"
 PUERTO = 5000
 
 
 def main():
 
-    # Crear socket TCP
-    cliente = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
     try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as cliente:
 
-        # Conectarse al servidor
-        cliente.connect((HOST, PUERTO))
+            cliente.connect((HOST, PUERTO))
 
-        print("[CLIENTE] Conexion establecida con el servidor.")
-        print("[CLIENTE] Escriba 'salir' para finalizar.")
+            print("[CLIENTE] Conexion establecida.")
 
-        while True:
+            # Generar llaves X25519.
+            privada, publica = generar_llaves()
 
-            # Escribir mensaje
-            mensaje = input("\n[CLIENTE]: ")
+            # Intercambiar llaves publicas.
+            publica_servidor = recibir_datos(cliente)
+            enviar_datos(cliente, publica)
 
-            # Enviar mensaje
-            cliente.sendall(mensaje.encode("utf-8"))
+            # Calcular secreto compartido.
+            secreto = calcular_secreto(
+                privada,
+                publica_servidor
+            )
 
-            if mensaje.lower() == "salir":
-                break
+            # Recibir salt.
+            salt = recibir_datos(cliente)
 
-            # Recibir respuesta
-            datos = cliente.recv(4096)
+            # Derivar llave AES.
+            llave_aes = derivar_llave_aes(
+                secreto,
+                salt
+            )
 
-            if not datos:
-                print("[CLIENTE] Servidor desconectado.")
-                break
+            print("[X25519] Intercambio completado.")
+            print("[HKDF] Llave AES-256 derivada.")
+            print("[AES-GCM] Comunicacion cifrada activa.")
+            print("Escriba 'salir' para finalizar.\n")
 
-            respuesta = datos.decode("utf-8")
+            while True:
 
-            print(f"[SERVIDOR]: {respuesta}")
+                mensaje = input("[CLIENTE]: ")
 
-            if respuesta.lower() == "salir":
-                break
+                cifrado = cifrar_mensaje(
+                    llave_aes,
+                    mensaje
+                )
 
-    except ConnectionRefusedError:
-        print("[ERROR] No se pudo conectar con el servidor.")
+                enviar_datos(cliente, cifrado)
+
+                if mensaje.lower() == "salir":
+                    break
+
+                datos = recibir_datos(cliente)
+
+                respuesta = descifrar_mensaje(
+                    llave_aes,
+                    datos
+                )
+
+                print(f"[SERVIDOR]: {respuesta}")
+
+                if respuesta.lower() == "salir":
+                    break
+
+    except (ConnectionError, ConnectionRefusedError, ValueError) as error:
+        print(f"[ERROR] {error}")
 
     except KeyboardInterrupt:
-        print("\n[CLIENTE] Interrumpido por el usuario.")
+        print("\n[CLIENTE] Interrumpido.")
 
-    finally:
-        cliente.close()
-
-        print("[CLIENTE] Conexion cerrada.")
+    print("[CLIENTE] Conexion cerrada.")
 
 
 if __name__ == "__main__":
