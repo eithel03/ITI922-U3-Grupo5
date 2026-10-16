@@ -1,0 +1,17 @@
+# Entorno virtual
+env/
+venv/
+.venv/
+
+# Archivos temporales de Python
+__pycache__/
+*.pyc
+
+# Archivos del editor
+.vscode/
+
+# Secretos y llaves privadas
+*.key
+*.pem
+.env
+
