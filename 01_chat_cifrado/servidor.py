@@ -1,7 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+ITI-922 Seguridad de TI II
+Grupo 5
+
+Servidor de chat cifrado y autenticado.
+
+X25519: intercambio de llaves.
+Ed25519: autenticacion.
+HKDF: derivacion de llave.
+AES-256-GCM: cifrado de mensajes.
+"""
+
 import socket
+
+from cryptography.exceptions import InvalidTag
 
 from criptografia import (
     generar_llaves,
@@ -10,6 +24,11 @@ from criptografia import (
     generar_salt,
     cifrar_mensaje,
     descifrar_mensaje
+)
+
+from autenticacion import (
+    firmar_intercambio,
+    verificar_intercambio
 )
 
 from comunicacion import enviar_datos, recibir_datos
@@ -41,32 +60,82 @@ def main():
             print(f"[SERVIDOR] Cliente conectado: {direccion}")
 
             try:
-                # Generar llaves X25519.
-                privada, publica = generar_llaves()
 
-                # Intercambiar llaves publicas.
-                enviar_datos(conexion, publica)
+                # 1. Generar llaves X25519.
+                privada, publica_servidor = generar_llaves()
+
+                # 2. Enviar llave publica del servidor.
+                enviar_datos(conexion, publica_servidor)
+
+                # 3. Recibir llave publica del cliente.
                 publica_cliente = recibir_datos(conexion)
 
-                # Calcular secreto compartido.
+                # 4. Generar salt.
+                salt = generar_salt()
+
+                # 5. Enviar salt al cliente.
+                enviar_datos(conexion, salt)
+
+                # 6. Firmar intercambio con Ed25519.
+                firma_servidor = firmar_intercambio(
+                    "servidor",
+                    publica_servidor,
+                    publica_cliente,
+                    salt
+                )
+
+                # 7. Enviar firma del servidor.
+                enviar_datos(conexion, firma_servidor)
+
+                print("[ED25519] Firma del servidor enviada.")
+
+                # 8. Recibir firma del cliente.
+                firma_cliente = recibir_datos(conexion)
+
+                # 9. Verificar identidad del cliente.
+                autenticado = verificar_intercambio(
+                    "cliente",
+                    publica_servidor,
+                    publica_cliente,
+                    salt,
+                    firma_cliente
+                )
+
+                if not autenticado:
+                    print("[SEGURIDAD] Firma del cliente invalida.")
+                    raise ValueError(
+                        "Autenticacion del cliente fallida"
+                    )
+
+                print("[ED25519] Cliente autenticado correctamente.")
+
+                # 10. Calcular secreto compartido.
                 secreto = calcular_secreto(
                     privada,
                     publica_cliente
                 )
 
-                # Generar y transmitir salt.
-                salt = generar_salt()
-                enviar_datos(conexion, salt)
-
-                # Derivar llave AES.
+                # 11. Derivar llave AES.
                 llave_aes = derivar_llave_aes(
                     secreto,
                     salt
                 )
 
-                print("[X25519] Intercambio completado.")
+                print("[X25519] Intercambio autenticado.")
                 print("[HKDF] Llave AES-256 derivada.")
 
+                # 12. Confirmar autenticacion.
+                confirmacion = cifrar_mensaje(
+                    llave_aes,
+                    "AUTENTICACION_OK"
+                )
+
+                enviar_datos(conexion, confirmacion)
+
+                print("[AES-GCM] Comunicacion cifrada activa.")
+                print("Escriba 'salir' para finalizar.\n")
+
+                # 13. Iniciar chat.
                 while True:
 
                     datos = recibir_datos(conexion)
@@ -93,10 +162,17 @@ def main():
                     if respuesta.lower() == "salir":
                         break
 
-            except (ConnectionError, ValueError) as error:
+            except (
+                ConnectionError,
+                ValueError,
+                InvalidTag,
+                OSError
+            ) as error:
+
                 print(f"[ERROR] {error}")
 
             except KeyboardInterrupt:
+
                 print("\n[SERVIDOR] Interrumpido.")
 
             print("[SERVIDOR] Conexion cerrada.")
