@@ -3,41 +3,27 @@
 **Proyecto:** Algoritmos asimétricos y post-cuánticos  
 **Práctica 1:** Chat cifrado entre dos terminales  
 **Integrantes:** Eithel, Luis Diego, Rafa y Vanessa  
-**Alcance de esta versión:** Comunicación TCP, intercambio X25519, HKDF, cifrado AES-256-GCM y prueba de integridad. **Pendiente para completar la práctica:** autenticación y firmas Ed25519, análisis de tráfico con Wireshark/tcpdump y pruebas de MITM (práctica 2).
+**Alcance documentado:** Chat TCP local con X25519, HKDF-SHA-256, AES-256-GCM y autenticación mutua Ed25519 del intercambio; pruebas de firmas, integridad, rechazo de identidad falsa y captura Wireshark. La demostración MITM pertenece a la Práctica 2.
 
 ## 1. Objetivo y arquitectura
 
 Construir y comprobar un chat local cliente-servidor en Python que establezca una clave AES compartida sin enviar las claves privadas. Las dos aplicaciones se ejecutan inicialmente dentro de **una misma máquina virtual Ubuntu**, por medio de `127.0.0.1:5000`.
 
 ```text
-CLIENTE                                    SERVIDOR
-socket TCP -------- conexión -----------> socket TCP
-X25519: clave privada + pública           X25519: clave privada + pública
-         <------ claves públicas ------->
-     secreto X25519                          secreto X25519
-          <------ salt de servidor ---------
-      HKDF(SHA-256)                         HKDF(SHA-256)
-      misma clave AES-256                   misma clave AES-256
-          <-- mensajes AES-GCM (nonce + texto cifrado + tag) -->
+CLIENTE                                     SERVIDOR
+  | ----------- conexión TCP -------------> |
+  | <-------- pública X25519 servidor ------ |
+  | --------- pública X25519 cliente ------> |
+  | <------------- salt -------------------- |
+  | <--- firma Ed25519 del intercambio ----- |
+  | --- firma Ed25519 del intercambio -----> |
+  | verificar identidad y transcripción      | verificar identidad y transcripción
+  | X25519: secreto compartido               | X25519: secreto compartido
+  | HKDF-SHA-256 -> clave AES-256            | HKDF-SHA-256 -> misma clave
+  | <-------- mensajes AES-GCM ------------> |
 ```
 
-**Archivos de esta etapa:**
-
-```text
-ITI922-U3-Grupo5/
-├── 01_chat_cifrado/
-│   ├── servidor.py            # Escucha conexiones y responde mensajes
-│   ├── cliente.py             # Se conecta y envía mensajes
-│   ├── comunicacion.py        # Transmisión TCP con longitud prefijada
-│   ├── criptografia.py        # X25519, HKDF y AES-GCM
-│   ├── prueba_x25519.py       # Prueba de secretos/llaves iguales
-│   └── prueba_integridad.py   # Prueba de detección de alteraciones
-├── capturas/                  # Evidencias referenciadas por esta guía
-├── requirements.txt
-├── .gitignore
-├── README.md
-└── GUIA.md
-```
+**Archivos de la Práctica 1:** `servidor.py`, `cliente.py`, `comunicacion.py`, `criptografia.py`, `autenticacion.py`, `generar_identidades.py`, `prueba_x25519.py`, `prueba_integridad.py`, `prueba_ed25519.py` y `prueba_autenticacion.py` dentro de `01_chat_cifrado/`. Los archivos de identidad privados se generan localmente en `01_chat_cifrado/identidades/` y están excluidos de Git. Las capturas se guardan en `capturas/`.
 
 ## 2. Entorno y preparación desde Ubuntu
 
@@ -145,7 +131,15 @@ python 01_chat_cifrado/prueba_x25519.py
 - `descifrar_mensaje()`: separa los primeros 12 bytes como nonce, recupera el resto como texto cifrado y etiqueta, ejecuta `AESGCM(llave).decrypt(...)` y decodifica UTF-8. Si se manipula el contenido, lanza `InvalidTag`.
 - **Precaución:** no repetir un nonce con una misma llave AES-GCM. La versión de laboratorio emplea nonces aleatorios; para aplicaciones de producción se requiere un diseño y control explícitos contra reutilización.
 
-**Flujo de servidor y cliente:** `servidor.py` escucha el puerto y `cliente.py` se conecta; ambos crean claves X25519, intercambian claves públicas, calculan el secreto y derivan la misma clave AES con el `salt` que envía el servidor. Después se envían y reciben mensajes cifrados mediante las funciones anteriores. La comunicación actual es por turnos (cliente envía y servidor responde).
+**Flujo de servidor y cliente:** `servidor.py` escucha el puerto y `cliente.py` se conecta. Ambos crean claves X25519, intercambian claves públicas y autentican el intercambio con firmas Ed25519 vinculadas a los parámetros negociados. Una vez verificadas las identidades, calculan el secreto y derivan la misma clave AES con el `salt` del servidor. Después se envían y reciben mensajes cifrados mediante las funciones anteriores. La comunicación es por turnos (cliente envía y servidor responde).
+
+**Preparación previa (una vez por instalación):**
+
+```bash
+python 01_chat_cifrado/generar_identidades.py
+```
+
+El generador crea identidades Ed25519 locales de servidor y cliente; las claves privadas no se suben al repositorio. Las claves públicas de identidad deben considerarse confiables solo si se han obtenido/verificado por un canal confiable. No regenerar las identidades durante una sesión.
 
 **Terminal 1 — servidor** (desde cualquier directorio):
 
@@ -168,7 +162,7 @@ En ambos bloques:
 - `source` activa el entorno Python local.
 - `python` inicia el programa indicado. **Iniciar primero el servidor** y dejar su terminal abierta.
 
-**Resultados observados:** ambos imprimieron `Intercambio completado` y `Llave AES-256 derivada`; el cliente mostró `Comunicacion cifrada activa`; los mensajes de prueba se visualizaron correctamente tras descifrarse. La captura muestra mensajes en pantalla, **no es por sí misma evidencia del contenido de los paquetes de red**.
+**Resultados observados:** el cliente mostró `Servidor autenticado correctamente`, `Intercambio autenticado`, `Llave AES-256 derivada`, `Autenticacion mutua completada` y `Comunicacion cifrada activa`. El servidor confirmó la autenticación del cliente y el intercambio autenticado. Los mensajes de prueba se visualizaron correctamente después de descifrarse. La captura de terminales evidencia el funcionamiento; la captura de red se presenta por separado en la sección 10.
 
 **Evidencia 4 — chat cifrado funcionando:**
 
@@ -194,34 +188,115 @@ python 01_chat_cifrado/prueba_integridad.py
 
 ![Integridad de AES-GCM: rechazo de mensaje modificado](capturas/05_integridad_aes_gcm.png)
 
-## 7. Problemas comunes y soluciones
+## 7. Firmas Ed25519 y autenticación del intercambio
+
+El módulo `criptografia.py` incorpora generación de llaves Ed25519, firma y verificación de mensajes binarios. El módulo `generar_identidades.py` crea las identidades locales del cliente y del servidor, y `autenticacion.py` construye y verifica la información firmada del intercambio X25519 (incluido el `salt`). El servidor y el cliente rechazan una autenticación que no se verifique con la clave pública de identidad esperada.
+
+**Prueba de firmas:**
+
+```bash
+python 01_chat_cifrado/prueba_ed25519.py
+```
+
+**Resultados observados:** firma de 64 bytes; `Firma valida: True`; `Firma de mensaje modificado: False`; `Firma incorrecta aceptada: False`.
+
+![Prueba de firmas Ed25519](capturas/06_firmas_ed25519.png)
+
+**Chat con autenticación mutua:**
+
+![Chat con intercambio autenticado mediante Ed25519](capturas/07_chat_autenticado_ed25519.png)
+
+## 8. Rechazo de identidad falsa y manipulación
+
+Ejecutar:
+
+```bash
+python 01_chat_cifrado/prueba_autenticacion.py
+```
+
+**Resultados observados:**
+
+```text
+=== PRUEBA DE AUTENTICACION ED25519 ===
+[1] Firma legitima aceptada: True
+[2] Identidad falsa aceptada: False
+[3] Intercambio modificado aceptado: False
+[4] Salt modificado aceptado: False
+[OK] Todas las pruebas fueron exitosas.
+[SEGURIDAD] Identidades falsas rechazadas.
+[SEGURIDAD] Manipulaciones detectadas.
+=== PRUEBA FINALIZADA ===
+```
+
+La prueba valida el rechazo criptográfico de firmas de una identidad distinta y de cambios en los parámetros firmados. No simula por sí sola un atacante intermediario sobre una red real.
+
+![Rechazo de identidad falsa](capturas/08_rechazo_identidad_falsa.png)
+
+## 9. Captura de tráfico con Wireshark
+
+Se utilizó Wireshark 4.2.2 en Ubuntu, interfaz `lo` (loopback), porque la comunicación ocurre entre `127.0.0.1` y `127.0.0.1` mediante TCP puerto `5000`. Para visualizar segmentos con carga útil se aplicó:
+
+```text
+tcp.port == 5000 && tcp.len > 0
+```
+
+Wireshark inicialmente interpretó erróneamente el puerto 5000 como GSM over IP/IPA/RSL. Se cambió **Analizar → Decodificar como... → Data** para mostrar la carga útil sin una decodificación incorrecta. Esta clasificación automática no implicaba un fallo del chat.
+
+Se envió desde el cliente el mensaje ASCII `PRUEBA_AES_256_GRUPO5` (21 bytes). El filtro:
+
+```text
+tcp.port == 5000 && tcp.len == 53
+```
+
+permitió identificar el paquete 50, con `Data (53 bytes)`, en el sentido cliente → servidor. El tamaño coincide con el formato implementado:
+
+| Campo | Bytes |
+|---|---:|
+| Encabezado de longitud de aplicación | 4 |
+| Nonce AES-GCM | 12 |
+| Texto cifrado del mensaje de 21 bytes | 21 |
+| Etiqueta de autenticación GCM | 16 |
+| **Total** | **53** |
+
+El mensaje en claro no aparece en el contenido hexadecimal capturado. La captura demuestra el formato y la ausencia del texto legible en ese envío; la seguridad criptográfica se complementa con la revisión del código y la prueba `prueba_integridad.py`.
+
+![Paquetes TCP observados en Wireshark](capturas/09_trafico_tcp_wireshark.png)
+
+![Mensaje cifrado de 53 bytes observado en Wireshark](capturas/10_datos_cifrados_aes_gcm.png)
+
+**Archivo de captura:** [`capturas/chat_cifrado_grupo5.pcapng`](capturas/chat_cifrado_grupo5.pcapng).
+
+## 10. Problemas comunes y soluciones
 
 | Problema | Posible causa | Solución |
 |---|---|---|
-| `No se pudo conectar con el servidor` | No está en ejecución `servidor.py`. | Abrir terminal 1 e iniciar el servidor antes que el cliente. |
-| `No such file or directory` al ejecutar Python | Se incluyó `01_chat_cifrado/` dos veces en la ruta. | Desde la raíz usar `python 01_chat_cifrado/servidor.py`; dentro de esa carpeta usar `python servidor.py`. |
-| `source: env/bin/activate: No existe ...` | Se intenta activar desde `01_chat_cifrado/`. | Volver a la raíz (`cd ..`) y ejecutar `source env/bin/activate`, o utilizar `source ../env/bin/activate`. |
-| `ModuleNotFoundError: cryptography` | Entorno sin activar o dependencia ausente. | Activar `env` e instalar `python -m pip install -r requirements.txt`. |
-| El servidor deja de responder al cerrar su ventana | El proceso se cierra con la terminal. | Mantenerlo abierto durante la prueba; reiniciarlo si se cerró. |
-| `Address already in use` | Otro proceso utiliza el puerto 5000. | Detener instancias anteriores y volver a iniciar el servidor. |
-| `InvalidTag` al descifrar | Clave, nonce o datos cifrados incorrectos/manipulados. | Verificar el protocolo e investigar la alteración; no ignorar el fallo. |
+| `Connection refused` | El servidor no estaba iniciado. | Ejecutar primero `servidor.py`. |
+| `ConnectionError: Conexion cerrada` | El cliente cerró con `Ctrl+C` mientras el servidor esperaba. | Terminar normalmente escribiendo `salir`. |
+| `Address already in use` | Puerto 5000 ocupado. | Cerrar la instancia anterior del servidor. |
+| `ModuleNotFoundError: cryptography` | Entorno virtual inactivo o dependencia ausente. | Activar `env` y ejecutar `python -m pip install -r requirements.txt`. |
+| Error al activar `env` | Directorio de trabajo incorrecto. | Volver a la raíz del repositorio. |
+| `InvalidTag` | Mensaje cifrado, nonce, etiqueta o clave no coinciden. | Rechazar el mensaje e investigar la alteración. |
+| `RSL [Malformed Packet]` / `IPA` en Wireshark | Decodificación automática incorrecta del puerto 5000. | Utilizar **Decodificar como... → Data**. |
+| Wireshark no muestra interfaces | Permisos de captura insuficientes. | Configurar `wireshark-common`, grupo `wireshark` y reiniciar sesión. |
 
-## 8. Limitaciones y trabajo pendiente
+## 11. Alcance y consideraciones de seguridad
 
-1. **Autenticación pendiente:** X25519 genera un secreto compartido, pero las claves públicas recibidas no se autentican. Un intermediario podría sustituirlas. Para corregirlo, el compañero incorporará **Ed25519** y verificará firmas usando claves públicas de identidad que ya sean confiables; no basta con aceptar una clave de identidad recibida por el mismo canal sin verificar.
-2. **Firmas de mensajes pendientes:** la consigna requiere mensajes cifrados con AES-GCM **y firmados con Ed25519**. La versión actual solo implementa el cifrado autenticado simétrico.
-3. **Wireshark/tcpdump pendiente:** falta capturar el tráfico para verificar visualmente que el mensaje no circula en texto legible. `127.0.0.1` requiere capturar la interfaz de loopback (`lo`) o adaptar la configuración para dos VMs.
-4. **Práctica 2 pendiente:** construir la demostración de MITM sin autenticación y su bloqueo con firmas confiables.
-5. **Ámbito:** aplicación educativa para una conexión local y comunicación por turnos, sin endurecimiento para producción.
+La Práctica 1 quedó comprobada en una VM Ubuntu con una sola conexión TCP local y chat por turnos. **Ed25519 autentica el intercambio de claves**, mientras **AES-GCM autentica e integra los mensajes cifrados**; no se ha demostrado una firma Ed25519 independiente por mensaje. La validez de la identidad depende de confiar previamente en la clave pública correspondiente. Se utilizan nonces aleatorios de 12 bytes; no debe reutilizarse un nonce con la misma clave AES-GCM. 
 
-## 9. Registro de evidencias
+## 12. Registro de evidencias de la Práctica 1
 
-| Archivo | Qué comprueba | Uso recomendado |
-|---|---|---|
-| `01_entorno_python.png` | Python y `cryptography` instalados | Guía práctica |
-| `02_comunicacion_sockets.png` | Comunicación TCP inicial | Guía práctica |
-| `03_intercambio_x25519_hkdf.png` | Secreto y llave AES coincidentes | Guía práctica |
-| `04_chat_cifrado_aes_gcm.png` | Chat cifrado funcionando | Guía e informe (resultados) |
-| `05_integridad_aes_gcm.png` | AES-GCM rechaza alteraciones | Guía; opcional en informe |
+| Archivo | Evidencia |
+|---|---|
+| `01_entorno_python.png` | Entorno Python y biblioteca criptográfica. |
+| `02_comunicacion_sockets.png` | Prueba inicial de comunicación TCP. |
+| `03_intercambio_x25519_hkdf.png` | Secreto compartido y clave AES coincidentes. |
+| `04_chat_cifrado_aes_gcm.png` | Comunicación cifrada en terminales. |
+| `05_integridad_aes_gcm.png` | Rechazo de alteración mediante AES-GCM. |
+| `06_firmas_ed25519.png` | Verificación de firmas legítimas y falsas. |
+| `07_chat_autenticado_ed25519.png` | Autenticación mutua durante el chat. |
+| `08_rechazo_identidad_falsa.png` | Rechazo de identidad falsa y parámetros modificados. |
+| `09_trafico_tcp_wireshark.png` | Captura TCP en la interfaz loopback. |
+| `10_datos_cifrados_aes_gcm.png` | Carga útil de 53 bytes asociada al mensaje cifrado. |
+| `chat_cifrado_grupo5.pcapng` | Registro de paquetes para inspección en Wireshark. |
 
-**Nota para el equipo:** completar esta guía después de implementar Ed25519 y registrar la captura de tráfico; actualizar instrucciones, capturas y limitaciones según los resultados **realmente verificados**.
+**Reproducción:** preparar el entorno e identidades, iniciar servidor y cliente, ejecutar las cuatro pruebas y capturar en `lo` el puerto TCP 5000. Los comandos y resultados se documentan en las secciones anteriores.

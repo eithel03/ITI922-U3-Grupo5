@@ -3,7 +3,7 @@
 **Proyecto de algoritmos asimétricos y post-cuánticos — Seguridad de TI II**  
 **Universidad Técnica Nacional | Curso ITI-922 | Unidad III: Sistemas de alta seguridad**
 
-**Integrantes:** Eithel, LuisDiego, Rafa y Vanessa.
+**Integrantes:** Eithel, Luis Diego, Rafa y Vanessa.
 
 ## Descripción
 
@@ -11,33 +11,37 @@ Este repositorio reúne las prácticas del Grupo 5 sobre criptografía asimétri
 
 El proyecto contempla tres actividades:
 
-1. **Chat cifrado:** comunicación TCP entre cliente y servidor con X25519, HKDF, AES-256-GCM y, como siguiente fase, firmas Ed25519.
+1. **Chat cifrado:** comunicación TCP entre cliente y servidor con X25519, HKDF, AES-256-GCM y autenticación mutua del intercambio mediante firmas Ed25519.
 2. **Demostración MITM:** mostrar el riesgo del intercambio no autenticado y cómo impedir la suplantación mediante autenticación de claves.
 3. **Comparación clásica y post-cuántica:** medir RSA-3072, X25519 y ML-KEM-768 (tamaño de clave pública, datos enviados y tiempos de operación), y presentar tabla y gráfico.
 
-> **Estado actual:** está implementada y probada una versión local del chat con sockets TCP, intercambio X25519, derivación HKDF y cifrado autenticado AES-GCM. **Todavía no incorpora Ed25519 ni autenticación de identidad**; por tanto, el intercambio de claves puede ser vulnerable a MITM. No utilizar esta versión para comunicaciones reales o datos sensibles.
+> **Estado verificado de la Práctica 1:** chat TCP local operativo con X25519, HKDF-SHA-256, AES-256-GCM y autenticación mutua Ed25519 del intercambio de claves. Se ejecutaron pruebas de integridad, firmas, rechazo de identidad falsa y manipulación del intercambio, además de una captura Wireshark del tráfico cifrado.
 
 ## Estructura del repositorio
 
 ```text
 ITI922-U3-Grupo5/
 ├── 01_chat_cifrado/
-│   ├── servidor.py           # Servidor TCP y chat cifrado
-│   ├── cliente.py            # Cliente TCP y chat cifrado
-│   ├── criptografia.py       # X25519, HKDF y AES-GCM
-│   ├── comunicacion.py       # Envío/recepción con longitud de mensaje
-│   ├── prueba_x25519.py      # Prueba de secreto y clave derivados
-│   └── prueba_integridad.py  # Prueba de detección de manipulación AES-GCM
-├── 02_ataque_mitm/           # Pendiente de implementar
-├── 03_comparacion/           # Pendiente de implementar
-├── capturas/                # Evidencias para la guía, si se incluyen
-├── GUIA.md                  # Procedimiento reproducible y evidencias
-├── requirements.txt         # Dependencias de Python
+│   ├── servidor.py                 # Servidor TCP autenticado y cifrado
+│   ├── cliente.py                  # Cliente TCP autenticado y cifrado
+│   ├── comunicacion.py             # Tramas con longitud prefijada
+│   ├── criptografia.py             # X25519, HKDF, AES-GCM y Ed25519
+│   ├── autenticacion.py            # Firma/verificación del intercambio
+│   ├── generar_identidades.py      # Identidades locales Ed25519
+│   ├── prueba_x25519.py
+│   ├── prueba_integridad.py
+│   ├── prueba_ed25519.py
+│   └── prueba_autenticacion.py
+├── 02_ataque_mitm/                 # Material de la Práctica 2
+├── 03_comparacion/                 # Material de la Práctica 3
+├── capturas/                      # Evidencias de las pruebas
+├── GUIA.md                        # Procedimiento y resultados detallados
+├── requirements.txt
 ├── .gitignore
 └── README.md
 ```
 
-La estructura se irá ampliando a medida que el grupo integre el resto de las prácticas.
+Las identidades privadas se guardan localmente en `01_chat_cifrado/identidades/`, carpeta excluida de Git mediante `.gitignore`. Las prácticas 2 y 3 son actividades independientes de la implementación documentada aquí; no se afirma su ejecución.
 
 ## Requisitos
 
@@ -71,9 +75,17 @@ python -m pip install -r requirements.txt
 
 La carpeta `env/` es local y **no se sube al repositorio**. Si se abre una terminal nueva, se debe volver a activar el entorno con `source env/bin/activate` desde la raíz del proyecto.
 
-## Ejecución de la práctica 1: chat cifrado
+## Ejecución de la práctica 1: chat cifrado y autenticado
 
-Abrir **dos terminales en la misma VM**. Iniciar siempre el servidor antes que el cliente.
+Con el entorno virtual activo, **generar las identidades una sola vez por instalación**:
+
+```bash
+python 01_chat_cifrado/generar_identidades.py
+```
+
+El programa crea las identidades Ed25519 de servidor y cliente en `01_chat_cifrado/identidades/`. Cada participante verifica las firmas usando la clave pública de identidad confiable almacenada localmente. **No regenerar las identidades entre iniciar servidor y cliente**: ambos deben utilizar el mismo conjunto de identidades configurado para la prueba.
+
+Abrir dos terminales en la misma VM e iniciar primero el servidor.
 
 **Terminal 1 — servidor:**
 
@@ -91,39 +103,62 @@ source env/bin/activate
 python 01_chat_cifrado/cliente.py
 ```
 
-El cliente y el servidor intercambian claves públicas X25519, obtienen el mismo secreto compartido y derivan una clave AES de 256 bits con HKDF. A partir de ese momento los mensajes se envían cifrados con AES-GCM. Los mensajes aparecen **descifrados en las terminales** de los participantes. Para finalizar, escribir `salir`.
+El servidor y el cliente intercambian claves públicas efímeras X25519; el intercambio y sus parámetros se autentican con firmas Ed25519. Tras verificar las identidades, ambos calculan el secreto compartido y derivan una clave AES de 256 bits con HKDF-SHA-256. Los mensajes se cifran y autentican con AES-GCM. La aplicación funciona **por turnos**: primero escribe el cliente, después responde el servidor. Para cerrar normalmente, escribir `salir`.
 
-> Esta versión funciona por turnos: el cliente envía primero y el servidor responde. La salida de consola confirma el funcionamiento del programa, pero la verificación visual del contenido de los paquetes de red con Wireshark/tcpdump está pendiente.
+**Salida verificada en el cliente:**
 
-## Pruebas realizadas
+```text
+[ED25519] Servidor autenticado correctamente.
+[ED25519] Firma del cliente enviada.
+[X25519] Intercambio autenticado.
+[HKDF] Llave AES-256 derivada.
+[ED25519] Autenticacion mutua completada.
+[AES-GCM] Comunicacion cifrada activa.
+```
 
-Con el entorno virtual activo y desde la raíz del repositorio:
+## Pruebas realizadas y resultados
 
-**1. X25519 y HKDF**
+Ejecutar desde la raíz del repositorio, con `env` activo:
 
 ```bash
 python 01_chat_cifrado/prueba_x25519.py
-```
-
-**Resultado esperado:** `Secretos iguales: True`, `Llaves AES iguales: True` y `Tamano de la llave AES: 256 bits`.
-
-**2. Integridad AES-GCM**
-
-```bash
 python 01_chat_cifrado/prueba_integridad.py
+python 01_chat_cifrado/prueba_ed25519.py
+python 01_chat_cifrado/prueba_autenticacion.py
 ```
 
-**Resultado esperado:** se recupera correctamente el mensaje original; después de modificar un byte del texto cifrado, AES-GCM detecta la alteración y rechaza el descifrado (`InvalidTag`). Esta prueba verifica la integridad del cifrado, **no la identidad de los participantes**.
+| Prueba | Resultado observado |
+|---|---|
+| X25519 + HKDF | Secretos iguales `True`, claves AES iguales `True`, longitud 256 bits. |
+| Integridad AES-GCM | El mensaje original se recupera; una alteración provoca rechazo (`InvalidTag`). |
+| Firmas Ed25519 | Firma legítima `True`; mensaje modificado `False`; firma incorrecta `False`. |
+| Autenticación del intercambio | Firma legítima `True`; identidad falsa `False`; clave X25519 modificada `False`; `salt` modificado `False`. |
+| Chat autenticado | Cliente y servidor intercambiaron mensajes y confirmaron autenticación mutua. |
+| Wireshark | Captura en `lo`, TCP puerto 5000, de una carga de 53 bytes para el mensaje de prueba de 21 bytes. |
 
-Las salidas obtenidas, comandos explicados y capturas están documentados en **[GUIA.md](GUIA.md)**. Las imágenes referenciadas allí deben conservar sus rutas relativas dentro de `capturas/`.
+### Evidencia de tráfico cifrado
 
-## Trabajo pendiente
+Wireshark 4.2.2 se utilizó sobre la interfaz de loopback `lo` con el filtro de visualización:
 
-- **Ed25519:** firmar mensajes y, especialmente, autenticar el intercambio X25519 mediante claves públicas de identidad conocidas o verificadas por un canal confiable.
-- **MITM:** implementar la demostración controlada de sustitución de claves en la versión sin autenticación y el rechazo del ataque en la versión autenticada.
-- **Captura de tráfico:** utilizar Wireshark o tcpdump para comprobar que los mensajes transmitidos no son legibles en la red.
-- **Comparación criptográfica:** ejecutar las mediciones de RSA-3072, X25519 y ML-KEM-768 y generar tabla y gráfico.
-- **Documentación final:** completar la guía, el análisis de resultados y los pasos de las nuevas prácticas.
+```text
+tcp.port == 5000 && tcp.len > 0
+```
+
+Para identificar el envío del mensaje ASCII `PRUEBA_AES_256_GRUPO5` se empleó:
+
+```text
+tcp.port == 5000 && tcp.len == 53
+```
+
+El mensaje tiene 21 bytes. La trama de aplicación observada contiene **4 bytes de longitud + 12 bytes de nonce + 21 bytes de texto cifrado + 16 bytes de etiqueta GCM = 53 bytes**. En Wireshark se identificó el paquete 50 con `Data (53 bytes)` y contenido hexadecimal, sin el texto original en claro. El tamaño y la captura son consistentes con el formato implementado; la garantía criptográfica se sustenta además en el código y las pruebas de integridad.
+
+![Datos cifrados observados en Wireshark](capturas/10_datos_cifrados_aes_gcm.png)
+
+El registro completo se encuentra en [`capturas/chat_cifrado_grupo5.pcapng`](capturas/chat_cifrado_grupo5.pcapng). Para el procedimiento detallado y todas las imágenes, consultar **[GUIA.md](GUIA.md)**.
+
+## Alcance y limitaciones de la Práctica 1
+
+La autenticación Ed25519 se aplica al **intercambio de claves**, mientras que AES-GCM proporciona confidencialidad e integridad a los mensajes posteriores. Las pruebas no acreditan firmas Ed25519 independientes sobre cada mensaje ni constituyen una demostración completa de MITM. La confianza en las claves públicas de identidad depende de su provisión previa por un medio confiable. La ejecución comprobada es local (`127.0.0.1:5000`), con una conexión y comunicación por turnos. No se recomienda usar el prototipo con información sensible ni considerarlo listo para producción.
 
 ## Seguridad y colaboración
 
