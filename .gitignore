@@ -15,3 +15,6 @@ __pycache__/
 *.pem
 .env
 
+
+# Identidades criptograficas locales
+01_chat_cifrado/identidades/
