@@ -12,10 +12,12 @@ Este repositorio reúne las prácticas del Grupo 5 sobre criptografía asimétri
 El proyecto contempla tres actividades:
 
 1. **Chat cifrado:** comunicación TCP entre cliente y servidor con X25519, HKDF, AES-256-GCM y autenticación mutua del intercambio mediante firmas Ed25519.
-2. **Demostración MITM:** mostrar el riesgo del intercambio no autenticado y cómo impedir la suplantación mediante autenticación de claves.
+2. **Demostración MITM:** un tercer programa se coloca entre el cliente y el servidor, lee y altera los mensajes del protocolo sin firmas; con firmas Ed25519 la suplantación es rechazada.
 3. **Comparación clásica y post-cuántica:** medir RSA-3072, X25519 y ML-KEM-768 (tamaño de clave pública, datos enviados y tiempos de operación), y presentar tabla y gráfico.
 
 > **Estado verificado de la Práctica 1:** chat TCP local operativo con X25519, HKDF-SHA-256, AES-256-GCM y autenticación mutua Ed25519 del intercambio de claves. Se ejecutaron pruebas de integridad, firmas, rechazo de identidad falsa y manipulación del intercambio, además de una captura Wireshark del tráfico cifrado.
+
+> **Estado verificado de la Práctica 2:** ataque MITM demostrado en loopback con tres procesos (servidor, atacante y cliente). Sin firmas, el atacante descifró, leyó y alteró la conversación; con firmas Ed25519 la suplantación fue rechazada antes del primer mensaje. Incluye prueba automática, modo relay opaco y captura `pcapng` de los puertos 5000 y 5001.
 
 ## Estructura del repositorio
 
@@ -32,7 +34,13 @@ ITI922-U3-Grupo5/
 │   ├── prueba_integridad.py
 │   ├── prueba_ed25519.py
 │   └── prueba_autenticacion.py
-├── 02_ataque_mitm/                 # Material de la Práctica 2
+├── 02_ataque_mitm/
+│   ├── servidor_vulnerable.py      # Servidor SIN firmas (objetivo del ataque)
+│   ├── cliente_vulnerable.py       # Cliente SIN firmas (conecta al atacante)
+│   ├── servidor_autenticado.py     # Servidor CON firmas Ed25519
+│   ├── cliente_autenticado.py      # Cliente CON firmas Ed25519
+│   ├── atacante_mitm.py            # Atacante: lectura | suplantacion | relay
+│   └── prueba_mitm.py              # Prueba automática del ataque y su bloqueo
 ├── 03_comparacion/                 # Material de la Práctica 3
 ├── capturas/                      # Evidencias de las pruebas
 ├── GUIA.md                        # Procedimiento y resultados detallados
@@ -41,16 +49,17 @@ ITI922-U3-Grupo5/
 └── README.md
 ```
 
-Las identidades privadas se guardan localmente en `01_chat_cifrado/identidades/`, carpeta excluida de Git mediante `.gitignore`. Las prácticas 2 y 3 son actividades independientes de la implementación documentada aquí; no se afirma su ejecución.
+Las identidades privadas se guardan localmente en `01_chat_cifrado/identidades/`, carpeta excluida de Git mediante `.gitignore`. La Práctica 2 reutiliza esos módulos e identidades; no genera llaves propias. La Práctica 3 sigue pendiente.
 
 ## Requisitos
 
-- Ubuntu 24.04 en VirtualBox (entorno de desarrollo probado).
+- Ubuntu 24.04 en VirtualBox o Linux Mint 22.x (entornos verificados).
 - Python 3.12.3 y `python3-venv`.
 - Git para obtener y actualizar el proyecto.
 - Dependencias definidas en `requirements.txt` (`cryptography` 50.0.2 en las pruebas iniciales).
+- Wireshark (solo para las capturas de evidencia).
 
-La primera etapa se ejecuta **dentro de una sola VM**, con dos terminales; no requiere configurar una segunda máquina. La dirección usada es `127.0.0.1` y el puerto TCP `5000`.
+La primera etapa se ejecuta **dentro de una sola VM**, con dos terminales; no requiere configurar una segunda máquina. La dirección usada es `127.0.0.1` y el puerto TCP `5000`. La Práctica 2 usa además el puerto `5001` para el atacante.
 
 ## Instalación
 
@@ -159,6 +168,46 @@ El registro completo se encuentra en [`capturas/chat_cifrado_grupo5.pcapng`](cap
 ## Alcance y limitaciones de la Práctica 1
 
 La autenticación Ed25519 se aplica al **intercambio de claves**, mientras que AES-GCM proporciona confidencialidad e integridad a los mensajes posteriores. Las pruebas no acreditan firmas Ed25519 independientes sobre cada mensaje ni constituyen una demostración completa de MITM. La confianza en las claves públicas de identidad depende de su provisión previa por un medio confiable. La ejecución comprobada es local (`127.0.0.1:5000`), con una conexión y comunicación por turnos. No se recomienda usar el prototipo con información sensible ni considerarlo listo para producción.
+
+## Ejecución de la práctica 2: demostración del ataque MITM
+
+La Práctica 2 reutiliza los módulos criptográficos y las identidades de la Práctica 1. Con el entorno activo, ejecutar primero la prueba automática:
+
+```bash
+python 02_ataque_mitm/prueba_mitm.py
+```
+
+Para la demostración en vivo se usan **tres terminales** (servidor, atacante y cliente), en ese orden de inicio:
+
+**Escenario A — ataque exitoso sin firmas:**
+
+```bash
+python 02_ataque_mitm/servidor_vulnerable.py   # terminal 1
+python 02_ataque_mitm/atacante_mitm.py         # terminal 2 (modo lectura)
+python 02_ataque_mitm/cliente_vulnerable.py    # terminal 3
+```
+
+El atacante descifra, imprime y reenvía (alterado) cada mensaje entre el cliente y el servidor.
+
+**Escenario B — suplantación bloqueada con firmas:**
+
+```bash
+python 02_ataque_mitm/servidor_autenticado.py       # terminal 1
+python 02_ataque_mitm/atacante_mitm.py suplantacion # terminal 2
+python 02_ataque_mitm/cliente_autenticado.py        # terminal 3
+```
+
+El cliente muestra `[SEGURIDAD] Firma del servidor invalida` y cierra antes del primer mensaje.
+
+**Escenario C — relay opaco con firmas:**
+
+```bash
+python 02_ataque_mitm/servidor_autenticado.py  # terminal 1
+python 02_ataque_mitm/atacante_mitm.py relay   # terminal 2
+python 02_ataque_mitm/cliente_autenticado.py   # terminal 3
+```
+
+La sesión autenticada funciona a través del atacante, que solo observa bytes cifrados. El procedimiento completo y las salidas se documentan en [GUIA.md](GUIA.md); el registro de paquetes del Escenario A está en [`capturas/ataque_mitm_grupo5.pcapng`](capturas/ataque_mitm_grupo5.pcapng).
 
 ## Seguridad y colaboración
 

@@ -2,8 +2,9 @@
 
 **Proyecto:** Algoritmos asimétricos y post-cuánticos  
 **Práctica 1:** Chat cifrado entre dos terminales  
+**Práctica 2:** Demostración del ataque man-in-the-middle (MITM)  
 **Integrantes:** Eithel, Luis Diego, Rafa y Vanessa  
-**Alcance documentado:** Chat TCP local con X25519, HKDF-SHA-256, AES-256-GCM y autenticación mutua Ed25519 del intercambio; pruebas de firmas, integridad, rechazo de identidad falsa y captura Wireshark. La demostración MITM pertenece a la Práctica 2.
+**Alcance documentado:** Chat TCP local con X25519, HKDF-SHA-256, AES-256-GCM y autenticación mutua Ed25519 del intercambio; pruebas de firmas, integridad, rechazo de identidad falsa y captura Wireshark. Demostración del ataque MITM sobre el protocolo sin firmas y su bloqueo mediante firmas Ed25519.
 
 ## 1. Objetivo y arquitectura
 
@@ -300,3 +301,258 @@ La Práctica 1 quedó comprobada en una VM Ubuntu con una sola conexión TCP loc
 | `chat_cifrado_grupo5.pcapng` | Registro de paquetes para inspección en Wireshark. |
 
 **Reproducción:** preparar el entorno e identidades, iniciar servidor y cliente, ejecutar las cuatro pruebas y capturar en `lo` el puerto TCP 5000. Los comandos y resultados se documentan en las secciones anteriores.
+
+---
+
+# Práctica 2 — Demostración del ataque man-in-the-middle (MITM)
+
+**Objetivo:** demostrar que un intercambio Diffie-Hellman (X25519) sin autenticación permite que un tercer programa se coloque entre el cliente y el servidor, lea y altere los mensajes; y que las firmas Ed25519 sobre la transcripción del intercambio impiden ese ataque.
+
+## 1. Arquitectura del ataque
+
+El atacante (`atacante_mitm.py`) escucha en el puerto **5001** y se conecta al servidor real en el puerto **5000**. El cliente vulnerable se conecta al puerto 5001 sin saber que está hablando con un intermediario.
+
+```text
+CLIENTE                 ATACANTE MITM              SERVIDOR
+  |                          |                         |
+  | -- publica X25519 ------>|<-- publica X25519 ------|
+  |    (recibe llave A)      |    (recibe llave B)     |
+  |                          |                         |
+  |  secreto cliente-A       |       secreto B-servidor|
+  |  llave AES C             |       llave AES S       |
+  |                          |                         |
+  | <--- mensajes AES-GCM -->|-- descifra, lee,altera ->|
+```
+
+Sin firmas, el atacante termina **dos intercambios X25519 independientes**: uno con el cliente (llave A) y otro con el servidor (llave B). Deriva dos llaves AES distintas, descifra cada mensaje por un lado y lo vuelve a cifrar por el otro. Con firmas Ed25519, la transcripción firmada deja de coincidir cuando el atacante sustituye una llave y la verificación falla.
+
+**Archivos de la Práctica 2:** `servidor_vulnerable.py`, `cliente_vulnerable.py`, `servidor_autenticado.py`, `cliente_autenticado.py`, `atacante_mitm.py` y `prueba_mitm.py` dentro de `02_ataque_mitm/`. Los módulos criptográficos (`criptografia.py`, `comunicacion.py`, `autenticacion.py`) se reutilizan desde `01_chat_cifrado/` mediante una inserción de ruta en `sys.path`, por lo que no se duplica el código de la Práctica 1.
+
+## 2. Requisitos previos
+
+El entorno virtual `env/` y las identidades Ed25519 de la Práctica 1 deben existir:
+
+```bash
+cd ~/ITI922-U3-Grupo5
+source env/bin/activate
+python 01_chat_cifrado/generar_identidades.py   # solo la primera vez
+```
+
+## 3. Prueba automática del ataque (sin redes)
+
+```bash
+python 02_ataque_mitm/prueba_mitm.py
+```
+
+El script no usa sockets: simula las matemáticas del ataque en memoria y verifica tres hechos:
+
+1. Sin firmas, el cliente y el servidor **no** comparten secreto entre sí; en cambio el atacante comparte un secreto con cada uno.
+2. El atacante **descifra** el mensaje del cliente y lo reenvía al servidor.
+3. Con firmas, ni la firma real sobre una llave sustituida ni la firma del atacante son aceptadas.
+
+**Salida observada:**
+
+```text
+=== PRUEBA DE ATAQUE MITM ===
+
+--- Parte 1: protocolo SIN firmas ---
+[1] Secreto cliente == secreto servidor: False
+[2] El atacante comparte secreto con el servidor: True
+[3] El atacante comparte secreto con el cliente: True
+[4] Mensaje que lee el atacante: Transferir 1000 colones
+[5] El servidor recibe el mensaje reenviado: Transferir 1000 colones
+[OK] Sin firmas, el atacante leyo y reenvio el mensaje completo.
+
+--- Parte 2: protocolo CON firmas ---
+[6] Firma real aceptada con llave sustituida: False
+[7] Firma del atacante aceptada: False
+[8] Firma legitima en transcripcion correcta: True
+
+[OK] Todas las pruebas MITM fueron exitosas.
+[SEGURIDAD] Sin firmas el ataque funciona; con firmas Ed25519 es bloqueado.
+
+=== PRUEBA FINALIZADA ===
+```
+
+**Evidencia 11 — prueba automática MITM:**
+
+![Prueba automática del ataque MITM](capturas/11_prueba_mitm_automatica.png)
+
+## 4. Escenario A: ataque exitoso sin firmas
+
+Se necesitan **tres terminales** con el entorno activo. El orden de inicio es: servidor, atacante y finalmente cliente.
+
+**Terminal 1 — servidor vulnerable:**
+
+```bash
+cd ~/ITI922-U3-Grupo5
+source env/bin/activate
+python 02_ataque_mitm/servidor_vulnerable.py
+```
+
+- Escucha en `127.0.0.1:5000` con X25519 + HKDF + AES-GCM, pero **sin** firmas Ed25519.
+
+**Terminal 2 — atacante MITM:**
+
+```bash
+cd ~/ITI922-U3-Grupo5
+source env/bin/activate
+python 02_ataque_mitm/atacante_mitm.py
+```
+
+- Sin argumentos, ejecuta el modo `lectura`: escucha en el puerto 5001, se conecta al servidor y prepara dos llaves AES propias.
+
+**Terminal 3 — cliente vulnerable:**
+
+```bash
+cd ~/ITI922-U3-Grupo5
+source env/bin/activate
+python 02_ataque_mitm/cliente_vulnerable.py
+```
+
+- Se conecta al puerto 5001 (el atacante), cree que habla con el servidor.
+
+Escribir un mensaje de prueba en el cliente (por ejemplo `hola MITM, este mensaje es secreto`), responder en el servidor y cerrar con `salir`.
+
+**Salida del atacante (la parte central de la demo):**
+
+```text
+[MITM] Llave publica REAL del servidor interceptada.
+[MITM] Llave A enviada al cliente (suplanta al servidor).
+[MITM] Llave publica del cliente interceptada.
+[MITM] Llave B enviada al servidor (suplanta al cliente).
+[MITM] Dos llaves AES en su poder.
+[MITM] El cliente y el servidor NO comparten ningun secreto entre si.
+
+[MITM][LEIDO] Confirmacion del servidor: AUTENTICACION_OK
+
+[MITM][CLIENTE -> SERVIDOR]: hola MITM, este mensaje es secreto
+[MITM][ALTERADO] Mensaje reescrito antes de reenviar.
+[MITM][SERVIDOR -> CLIENTE]: todo bien, mensaje recibido
+[MITM][ALTERADO] Mensaje reescrito antes de reenviar.
+```
+
+El cliente y el servidor reciben los mensajes con el prefijo `(modificado por MITM) `, lo que demuestra que el atacante no solo leyó la conversación sino que también la alteró. La constante `MODIFICAR_MENSAJES` de `atacante_mitm.py` controla ese comportamiento.
+
+**Evidencia 12 — escenario A en las tres terminales:**
+
+![Ataque MITM exitoso sin firmas](capturas/12_mitm_escenario_a_ataque_exitoso.png)
+
+## 5. Escenario B: la suplantación es bloqueada con firmas
+
+Mismas tres terminales, pero con el protocolo autenticado y el modo `suplantacion` del atacante.
+
+**Terminal 1 — servidor autenticado:**
+
+```bash
+python 02_ataque_mitm/servidor_autenticado.py
+```
+
+**Terminal 2 — atacante (modo suplantación):**
+
+```bash
+python 02_ataque_mitm/atacante_mitm.py suplantacion
+```
+
+- Sustituye las llaves X25519 igual que en el Escenario A y después reenvía los bloques restantes sin poder descifrarlos.
+
+**Terminal 3 — cliente autenticado:**
+
+```bash
+python 02_ataque_mitm/cliente_autenticado.py
+```
+
+**Resultado observado:** el cliente rechaza la sesión antes de cualquier mensaje.
+
+```text
+[CLIENTE] Conexion establecida.
+[SEGURIDAD] Firma del servidor invalida.
+[ERROR] Autenticacion del servidor fallida
+[CLIENTE] Conexion cerrada.
+```
+
+El atacante solo observa la firma de 64 bytes que no puede validar ni reemplazar:
+
+```text
+[MITM] Llaves X25519 sustituidas en el intercambio autenticado.
+[MITM][servidor -> cliente] 64 bytes opacos reenviados.
+          muestra: edca5ab1510336887330c70658b5de56 ...
+[MITM][cliente -> servidor] Canal cerrado.
+[MITM] Sesion terminada. La autenticacion impidio al atacante suplantar identidades.
+```
+
+La verificación falla porque la transcripción firmada por el servidor contiene su llave X25519 auténtica, mientras que el cliente intenta verificar contra la llave que el atacante le presentó. La firma Ed25519 cubre exactamente esos parámetros: contexto del protocolo + ambas llaves públicas + salt.
+
+**Evidencia 13 — escenario B, rechazo de la suplantación:**
+
+![Suplantación MITM bloqueada por firmas Ed25519](capturas/13_mitm_escenario_b_bloqueado.png)
+
+## 6. Escenario C: reenvío opaco con firmas (relay)
+
+```bash
+# Terminal 1
+python 02_ataque_mitm/servidor_autenticado.py
+# Terminal 2
+python 02_ataque_mitm/atacante_mitm.py relay
+# Terminal 3
+python 02_ataque_mitm/cliente_autenticado.py
+```
+
+En este modo el atacante **no** sustituye llaves: solo reenvía los bytes. La sesión autenticada se completa con éxito a través del atacante, pero este solo ve tramas opacas:
+
+```text
+[MITM][servidor -> cliente] 64 bytes opacos reenviados.
+          muestra: 4b4297196619f9c88929f5bf24c9ccd2 ...
+[MITM][cliente -> servidor] 51 bytes opacos reenviados.
+          muestra: 27a8167fc17589d4eee44eb7189bd5ee ...
+```
+
+Con firmas no es necesario bloquear el reenvío: aunque el atacante esté en el camino, el contenido permanece cifrado y la autenticación mutua garantiza con quién se habla.
+
+**Evidencia 14 — escenario C, relay opaco:**
+
+![Relay opaco: sesión autenticada ilegible para el atacante](capturas/14_mitm_escenario_c_relay.png)
+
+## 7. Captura de tráfico del ataque
+
+Durante el Escenario A se capturó la interfaz `lo` con el filtro:
+
+```text
+tcp port 5000 or tcp port 5001
+```
+
+La captura contiene 40 paquetes entre cliente-atacante (puerto 5001) y atacante-servidor (puerto 5000). La búsqueda del mensaje de prueba `PRUEBA_MITM_GRUPO5` en el archivo **no** encuentra texto en claro: en la red solo circulan las tramas AES-GCM. Quien ve el contenido en la terminal del atacante es el atacante, porque él termina el intercambio criptográfico por ambos lados, no porque el tráfico viaje en claro.
+
+**Archivo de captura:** [`capturas/ataque_mitm_grupo5.pcapng`](capturas/ataque_mitm_grupo5.pcapng).
+
+**Evidencia 15 — Wireshark con tráfico de los puertos 5000 y 5001:**
+
+![Captura Wireshark del ataque MITM](capturas/15_mitm_wireshark_puertos_5000_5001.png)
+
+## 8. Problemas comunes
+
+| Problema | Posible causa | Solución |
+|---|---|---|
+| `Connection refused` en el cliente | El atacante no está escuchando en 5001. | Iniciar primero `atacante_mitm.py`. |
+| `Connection refused` en el atacante | El servidor no está en el puerto 5000. | Iniciar primero `servidor_vulnerable.py` o `servidor_autenticado.py`. |
+| El servidor muestra `[ERROR] Conexion cerrada` en el Escenario B | Es el resultado esperado: el cliente rechazó la firma y cerró. | Verificar que el cliente muestre `[SEGURIDAD] Firma del servidor invalida`. |
+| `FileNotFoundError` de identidades | No se generaron las identidades de la Práctica 1. | Ejecutar `python 01_chat_cifrado/generar_identidades.py`. |
+| Los puertos 5000/5001 siguen ocupados | Una sesión anterior no cerró. | Cerrar las terminales y revisar con `ss -tlnp \| grep 500`. |
+| El cliente no conecta al atacante | Se ejecutó `cliente_vulnerable.py` sin el atacante, o se ejecutó `01_chat_cifrado/cliente.py` (usa el puerto 5000). | Usar los clientes de `02_ataque_mitm/`. |
+
+## 9. Alcance y consideraciones de seguridad
+
+La demostración ocurre en loopback (`127.0.0.1`) con tres procesos locales; el "atacante" necesita participación activa en el camino de conexión, como un proxy o una máquina intermedia real. El ataque MITM demuestra por qué el intercambio de claves debe ir acompañado de autenticación: firmas digitales con una identidad de confianza previa o certificados. En la Práctica 1 y en el Escenario B la confianza en la clave pública de identidad depende de su distribución previa por un medio confiable; en un entorno real ese rol lo cumplen los certificados y una autoridad de certificación (como ocurre en TLS).
+
+## 10. Registro de evidencias de la Práctica 2
+
+| Archivo | Evidencia |
+|---|---|
+| `11_prueba_mitm_automatica.png` | Prueba automática: ataque funciona sin firmas y falla con firmas. |
+| `12_mitm_escenario_a_ataque_exitoso.png` | Tres terminales: atacante lee y altera la conversación. |
+| `13_mitm_escenario_b_bloqueado.png` | Suplantación rechazada por la firma Ed25519. |
+| `14_mitm_escenario_c_relay.png` | Relay opaco: sesión autenticada ilegible. |
+| `15_mitm_wireshark_puertos_5000_5001.png` | Wireshark mostrando los dos puertos del ataque. |
+| `ataque_mitm_grupo5.pcapng` | Registro de paquetes del Escenario A. |
+
+**Reproducción:** generar identidades si no existen; ejecutar `prueba_mitm.py`; luego los tres escenarios con servidor, atacante y cliente en tres terminales; capturar en `lo` los puertos 5000 y 5001 durante el Escenario A.
