@@ -556,3 +556,60 @@ La demostración ocurre en loopback (`127.0.0.1`) con tres procesos locales; el 
 | `ataque_mitm_grupo5.pcapng` | Registro de paquetes del Escenario A. |
 
 **Reproducción:** generar identidades si no existen; ejecutar `prueba_mitm.py`; luego los tres escenarios con servidor, atacante y cliente en tres terminales; capturar en `lo` los puertos 5000 y 5001 durante el Escenario A.
+
+
+## Práctica 3: Comparación de algoritmos clásicos y post-cuánticos
+
+### Objetivo
+
+Comparar RSA-3072, X25519 y ML-KEM-768 mediante el tamaño de las claves públicas, los datos intercambiados y los tiempos de operación. También se utilizó Wireshark para observar el tráfico TCP generado por cada algoritmo.
+
+### Procedimiento
+
+1. Se ejecutó el programa `03_comparacion/comparar_algoritmos.py`, realizando 10 mediciones por algoritmo.
+2. Se guardaron los resultados en un archivo CSV, una tabla Markdown y dos gráficos SVG.
+3. Se creó una demostración de intercambio mediante sockets TCP en la dirección local `127.0.0.1`.
+4. Se capturó el tráfico de los puertos 5101, 5102 y 5103 con TShark y se revisó la captura en Wireshark.
+5. Se identificaron los paquetes que contenían los mensajes criptográficos y se compararon sus longitudes.
+
+### Resultados
+
+| Algoritmo | Clave pública | Datos criptográficos intercambiados | Generación de claves promedio |
+|---|---:|---:|---:|
+| RSA-3072 | 422 bytes | 806 bytes | 646.4936 ms |
+| X25519 | 32 bytes | 64 bytes | 19.7331 ms |
+| ML-KEM-768 | 1184 bytes | 2272 bytes | 0.5421 ms |
+
+Los tamaños de los mensajes fueron comprobados mediante las longitudes TCP observadas en Wireshark. RSA-3072 transmitió una clave pública de 422 bytes y un mensaje cifrado de 384 bytes. X25519 intercambió dos claves públicas de 32 bytes cada una. ML-KEM-768 transmitió una clave pública de 1184 bytes y un texto cifrado de encapsulación de 1088 bytes.
+
+### Análisis
+
+X25519 presentó el menor tamaño de intercambio, con 64 bytes. ML-KEM-768 intercambió más datos, pero tuvo el menor tiempo promedio de generación de claves en las mediciones realizadas. RSA-3072 presentó el mayor tiempo promedio de generación de claves en este equipo.
+
+Los tiempos dependen del hardware y de las condiciones de ejecución. Las operaciones medidas tampoco son idénticas entre algoritmos, por lo que los tiempos deben interpretarse teniendo en cuenta el tipo de operación realizada.
+
+Los tamaños de intercambio corresponden a los mensajes criptográficos de esta demostración. No incluyen las cabeceras de red ni representan el tamaño de una sesión TLS completa.
+
+### Evidencias
+
+Las evidencias de Wireshark se guardan en la carpeta `capturas`:
+
+- `comparacion_rsa.png`
+- `comparacion_x25519.png`
+- `comparacion_mlkem.png`
+- `comparacion.pcapng`
+
+Los resultados numéricos y los gráficos generados se encuentran en `03_comparacion`.
+
+### Archivos de la práctica
+
+- `03_comparacion/comparar_algoritmos.py`: medición de los algoritmos.
+- `03_comparacion/trafico_comparacion.py`: demostración de intercambio TCP.
+- `03_comparacion/resultados.csv`: resultados numéricos.
+- `03_comparacion/resultados.md`: tabla y análisis.
+- `03_comparacion/grafico_tamanos.svg`: gráfico de tamaños.
+- `03_comparacion/grafico_tiempos.svg`: gráfico de tiempos.
+
+
+
+

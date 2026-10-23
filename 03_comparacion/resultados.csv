@@ -1,0 +1,4 @@
+algoritmo,formato_clave,bytes_clave_publica,bytes_intercambio,tiempo_generacion_ms,tiempo_operacion_ms
+RSA-3072,DER/SPKI,422,806,646.4935951,1.0478517
+X25519,Raw,32,64,19.7331188,0.2245035
+ML-KEM-768,Raw,1184,2272,0.5420568,0.1919904
