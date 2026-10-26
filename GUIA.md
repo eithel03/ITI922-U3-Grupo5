@@ -2,9 +2,10 @@
 
 **Proyecto:** Algoritmos asimétricos y post-cuánticos  
 **Práctica 1:** Chat cifrado entre dos terminales  
-**Práctica 2:** Demostración del ataque man-in-the-middle (MITM)  
+**Práctica 2:** Demostración del ataque man-in-the-middle (MITM) 
+**Práctica 3:** Comparación de algoritmos clásicos y post-cuánticos
 **Integrantes:** Eithel, Luis Diego, Rafa y Vanessa  
-**Alcance documentado:** Chat TCP local con X25519, HKDF-SHA-256, AES-256-GCM y autenticación mutua Ed25519 del intercambio; pruebas de firmas, integridad, rechazo de identidad falsa y captura Wireshark. Demostración del ataque MITM sobre el protocolo sin firmas y su bloqueo mediante firmas Ed25519.
+**Alcance documentado:** Chat TCP local con intercambio de claves X25519, derivación HKDF-SHA-256, cifrado AES-256-GCM y autenticación mutua mediante Ed25519. La comunicación incorpora firmas digitales individuales para cada mensaje, vinculadas a la identidad del emisor, al intercambio criptográfico y a un número de secuencia. Se incluyen pruebas de integridad, verificación de firmas, rechazo de mensajes modificados y protección contra repetición. También se documenta la demostración del ataque MITM y la comparación de RSA-3072, X25519 y ML-KEM-768.
 
 ## 1. Objetivo y arquitectura
 
@@ -21,7 +22,7 @@ CLIENTE                                     SERVIDOR
   | verificar identidad y transcripción      | verificar identidad y transcripción
   | X25519: secreto compartido               | X25519: secreto compartido
   | HKDF-SHA-256 -> clave AES-256            | HKDF-SHA-256 -> misma clave
-  | <-------- mensajes AES-GCM ------------> |
+  | <--- mensajes firmados Ed25519 y cifrados AES-GCM ---> |
 ```
 
 **Archivos de la Práctica 1:** `servidor.py`, `cliente.py`, `comunicacion.py`, `criptografia.py`, `autenticacion.py`, `generar_identidades.py`, `prueba_x25519.py`, `prueba_integridad.py`, `prueba_ed25519.py` y `prueba_autenticacion.py` dentro de `01_chat_cifrado/`. Los archivos de identidad privados se generan localmente en `01_chat_cifrado/identidades/` y están excluidos de Git. Las capturas se guardan en `capturas/`.
@@ -132,7 +133,15 @@ python 01_chat_cifrado/prueba_x25519.py
 - `descifrar_mensaje()`: separa los primeros 12 bytes como nonce, recupera el resto como texto cifrado y etiqueta, ejecuta `AESGCM(llave).decrypt(...)` y decodifica UTF-8. Si se manipula el contenido, lanza `InvalidTag`.
 - **Precaución:** no repetir un nonce con una misma llave AES-GCM. La versión de laboratorio emplea nonces aleatorios; para aplicaciones de producción se requiere un diseño y control explícitos contra reutilización.
 
-**Flujo de servidor y cliente:** `servidor.py` escucha el puerto y `cliente.py` se conecta. Ambos crean claves X25519, intercambian claves públicas y autentican el intercambio con firmas Ed25519 vinculadas a los parámetros negociados. Una vez verificadas las identidades, calculan el secreto y derivan la misma clave AES con el `salt` del servidor. Después se envían y reciben mensajes cifrados mediante las funciones anteriores. La comunicación es por turnos (cliente envía y servidor responde).
+**Flujo de servidor y cliente:** `servidor.py` escucha las conexiones TCP y `cliente.py` establece la comunicación. Ambos participantes generan claves X25519, intercambian sus claves públicas y autentican los parámetros del intercambio mediante firmas digitales Ed25519.
+
+Después de verificar las identidades, calculan el secreto compartido y derivan una clave AES-256 mediante HKDF-SHA-256.
+
+Durante la comunicación, cada mensaje se firma individualmente utilizando la identidad Ed25519 del emisor. La firma incluye información vinculada a la sesión, el contenido del mensaje y un número de secuencia.
+
+Posteriormente, el mensaje y su firma se cifran mediante AES-256-GCM antes de enviarse por TCP. El receptor descifra los datos y verifica la firma digital antes de aceptar el mensaje.
+
+La comunicación funciona por turnos: primero envía el cliente y después responde el servidor. El intercambio finaliza al introducir `salir`.
 
 **Preparación previa (una vez por instalación):**
 
@@ -189,7 +198,7 @@ python 01_chat_cifrado/prueba_integridad.py
 
 ![Integridad de AES-GCM: rechazo de mensaje modificado](capturas/05_integridad_aes_gcm.png)
 
-## 7. Firmas Ed25519 y autenticación del intercambio
+## 7. Firmas Ed25519: autenticación del intercambio y de los mensajes
 
 El módulo `criptografia.py` incorpora generación de llaves Ed25519, firma y verificación de mensajes binarios. El módulo `generar_identidades.py` crea las identidades locales del cliente y del servidor, y `autenticacion.py` construye y verifica la información firmada del intercambio X25519 (incluido el `salt`). El servidor y el cliente rechazan una autenticación que no se verifique con la clave pública de identidad esperada.
 
@@ -206,6 +215,50 @@ python 01_chat_cifrado/prueba_ed25519.py
 **Chat con autenticación mutua:**
 
 ![Chat con intercambio autenticado mediante Ed25519](capturas/07_chat_autenticado_ed25519.png)
+
+### Verificación de firmas individuales en el chat
+
+El módulo `autenticacion.py` incorpora las funciones `firmar_chat()` y `verificar_chat()`, utilizadas para proteger individualmente los mensajes intercambiados entre cliente y servidor.
+
+La función `firmar_chat()` genera una firma Ed25519 utilizando la clave privada del emisor y construye un mensaje estructurado en formato JSON que contiene el texto original, la firma digital, la versión del formato y el número de secuencia.
+
+Por su parte, `verificar_chat()` utiliza la clave pública Ed25519 correspondiente para comprobar la autenticidad del mensaje recibido. También verifica que el número de secuencia coincida con el esperado.
+
+**Pruebas realizadas:**
+
+| Prueba | Resultado |
+|---|---|
+| Verificación de firma legítima | Firma aceptada correctamente. |
+| Modificación del contenido firmado | Mensaje rechazado. |
+| Repetición de un mensaje anterior | Mensaje rechazado por número de secuencia incorrecto. |
+| Verificación con identidad incorrecta | Firma rechazada. |
+
+**Resultado de las pruebas:**
+
+```text
+[OK] Firma Ed25519 valida
+[OK] Mensaje alterado rechazado
+[OK] Mensaje repetido rechazado
+[OK] Identidad incorrecta rechazada
+
+Todas las pruebas de firmas finalizaron.
+```
+
+Adicionalmente, se ejecutó el chat completo entre cliente y servidor. Se intercambiaron tres mensajes consecutivos y ambos participantes verificaron correctamente las firmas recibidas.
+
+Durante la ejecución, el servidor mostró:
+
+```text
+[ED25519] Firma del mensaje del cliente valida.
+```
+
+Mientras que el cliente confirmó:
+
+```text
+[ED25519] Firma del mensaje del servidor valida.
+```
+
+Estas pruebas comprobaron el funcionamiento de las firmas digitales individuales en ambos sentidos de la comunicación.
 
 ## 8. Rechazo de identidad falsa y manipulación
 
@@ -259,6 +312,8 @@ permitió identificar el paquete 50, con `Data (53 bytes)`, en el sentido client
 | Etiqueta de autenticación GCM | 16 |
 | **Total** | **53** |
 
+**Nota:** esta captura corresponde a la implementación inicial del cifrado AES-256-GCM. En la versión actual, cada mensaje incorpora una firma digital Ed25519 y otros campos de control dentro de un sobre JSON cifrado. Por lo tanto, el tamaño de los mensajes transmitidos es mayor que los 53 bytes observados en esta evidencia inicial.
+
 El mensaje en claro no aparece en el contenido hexadecimal capturado. La captura demuestra el formato y la ausencia del texto legible en ese envío; la seguridad criptográfica se complementa con la revisión del código y la prueba `prueba_integridad.py`.
 
 ![Paquetes TCP observados en Wireshark](capturas/09_trafico_tcp_wireshark.png)
@@ -282,7 +337,11 @@ El mensaje en claro no aparece en el contenido hexadecimal capturado. La captura
 
 ## 11. Alcance y consideraciones de seguridad
 
-La Práctica 1 quedó comprobada en una VM Ubuntu con una sola conexión TCP local y chat por turnos. **Ed25519 autentica el intercambio de claves**, mientras **AES-GCM autentica e integra los mensajes cifrados**; no se ha demostrado una firma Ed25519 independiente por mensaje. La validez de la identidad depende de confiar previamente en la clave pública correspondiente. Se utilizan nonces aleatorios de 12 bytes; no debe reutilizarse un nonce con la misma clave AES-GCM. 
+La Práctica 1 se comprobó en una máquina virtual Ubuntu mediante una conexión TCP local y comunicación por turnos. El sistema utiliza X25519 para establecer un secreto compartido, HKDF-SHA-256 para derivar la clave AES y AES-256-GCM para cifrar y proteger la integridad de los mensajes.
+
+Ed25519 permite autenticar el intercambio inicial y firmar individualmente cada mensaje transmitido. Las pruebas realizadas confirmaron la verificación de firmas legítimas y el rechazo de mensajes modificados, identidades incorrectas y números de secuencia inesperados.
+
+Se utilizan nonces aleatorios de 12 bytes para AES-GCM y las identidades Ed25519 se almacenan localmente. La verificación de identidad requiere que las claves públicas correspondientes sean previamente confiables. 
 
 ## 12. Registro de evidencias de la Práctica 1
 
@@ -571,6 +630,57 @@ Comparar RSA-3072, X25519 y ML-KEM-768 mediante el tamaño de las claves públic
 3. Se creó una demostración de intercambio mediante sockets TCP en la dirección local `127.0.0.1`.
 4. Se capturó el tráfico de los puertos 5101, 5102 y 5103 con TShark y se revisó la captura en Wireshark.
 5. Se identificaron los paquetes que contenían los mensajes criptográficos y se compararon sus longitudes.
+
+### Comandos de ejecución
+
+Desde la raíz del repositorio, activar el entorno virtual:
+
+```bash
+source env/bin/activate
+```
+
+**Ejecutar la comparación:**
+
+```bash
+python 03_comparacion/comparar_algoritmos.py
+```
+
+Este comando realiza diez mediciones por algoritmo y genera los archivos de resultados en `03_comparacion/`.
+
+**Capturar los intercambios TCP:**
+
+Abrir una primera terminal y ejecutar:
+
+```bash
+sudo tshark -i lo -f "tcp portrange 5101-5103" -w /tmp/comparacion_grupo5.pcapng
+```
+
+Abrir una segunda terminal, activar el entorno virtual y ejecutar:
+
+```bash
+python 03_comparacion/trafico_comparacion.py
+```
+
+El programa realiza los intercambios TCP mediante los puertos 5101 para RSA-3072, 5102 para X25519 y 5103 para ML-KEM-768.
+
+Al finalizar, detener TShark mediante `Ctrl + C`.
+
+Para abrir la captura en Wireshark:
+
+```bash
+sudo chown "$USER":"$USER" /tmp/comparacion_grupo5.pcapng
+wireshark /tmp/comparacion_grupo5.pcapng
+```
+
+Los paquetes de cada algoritmo pueden identificarse mediante los siguientes filtros:
+
+| Algoritmo | Filtro |
+|---|---|
+| RSA-3072 | `tcp.port == 5101 && tcp.len > 0` |
+| X25519 | `tcp.port == 5102 && tcp.len > 0` |
+| ML-KEM-768 | `tcp.port == 5103 && tcp.len > 0` |
+
+Los resultados permiten comparar los tamaños de las claves públicas y los datos intercambiados por cada mecanismo.
 
 ### Resultados
 
