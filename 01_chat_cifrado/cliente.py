@@ -8,7 +8,7 @@ Grupo 5
 Cliente de chat cifrado y autenticado.
 
 X25519: intercambio de llaves.
-Ed25519: autenticacion.
+Ed25519: autenticacion y firma de mensajes.
 HKDF: derivacion de llave.
 AES-256-GCM: cifrado de mensajes.
 """
@@ -27,7 +27,10 @@ from criptografia import (
 
 from autenticacion import (
     firmar_intercambio,
-    verificar_intercambio
+    verificar_intercambio,
+    construir_transcripcion,
+    firmar_chat,
+    verificar_chat
 )
 
 from comunicacion import enviar_datos, recibir_datos
@@ -76,13 +79,17 @@ def main():
 
             if not autenticado:
 
-                print("[SEGURIDAD] Firma del servidor invalida.")
+                print(
+                    "[SEGURIDAD] Firma del servidor invalida."
+                )
 
                 raise ValueError(
                     "Autenticacion del servidor fallida"
                 )
 
-            print("[ED25519] Servidor autenticado correctamente.")
+            print(
+                "[ED25519] Servidor autenticado correctamente."
+            )
 
             # 7. Firmar intercambio como cliente.
             firma_cliente = firmar_intercambio(
@@ -130,26 +137,74 @@ def main():
             print("[AES-GCM] Comunicacion cifrada activa.")
             print("Escriba 'salir' para finalizar.\n")
 
-            # 12. Iniciar chat.
+            # 12. Preparar firmas individuales.
+            #
+            # La transcripcion identifica esta sesion.
+            # Los contadores evitan aceptar mensajes
+            # repetidos o fuera de orden.
+
+            transcripcion = construir_transcripcion(
+                publica_servidor,
+                publica_cliente,
+                salt
+            )
+
+            enviados = 0
+            recibidos = 0
+
+            # 13. Iniciar chat.
             while True:
 
                 mensaje = input("[CLIENTE]: ")
 
-                cifrado = cifrar_mensaje(
-                    llave_aes,
-                    mensaje
+                # Firmar individualmente el mensaje.
+                sobre = firmar_chat(
+                    "cliente",
+                    mensaje,
+                    transcripcion,
+                    enviados
                 )
 
+                # Cifrar mensaje y firma con AES-GCM.
+                cifrado = cifrar_mensaje(
+                    llave_aes,
+                    sobre
+                )
+
+                # Enviar datos cifrados.
                 enviar_datos(cliente, cifrado)
+
+                enviados += 1
+
+                print(
+                    "[ED25519] Mensaje firmado y enviado."
+                )
 
                 if mensaje.lower() == "salir":
                     break
 
+                # Recibir respuesta cifrada.
                 datos = recibir_datos(cliente)
 
-                respuesta = descifrar_mensaje(
+                # Descifrar sobre firmado.
+                sobre_remoto = descifrar_mensaje(
                     llave_aes,
                     datos
+                )
+
+                # Verificar firma del servidor.
+                respuesta = verificar_chat(
+                    "servidor",
+                    sobre_remoto,
+                    transcripcion,
+                    recibidos
+                )
+
+                recibidos += 1
+
+                print(
+                    "[ED25519] Firma del mensaje "
+                    "del servidor valida."
                 )
 
                 print(f"[SERVIDOR]: {respuesta}")
